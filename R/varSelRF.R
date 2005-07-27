@@ -75,8 +75,9 @@ basicClusterInit <- function(clusterNumberNodes = 1,
          makeCluster(clusterNumberNodes,
                      type = typeCluster),
          env = .GlobalEnv)    
-  clusterSetupSPRNG(eval(parse(text = nameCluster)),
-                    seed = as.numeric(Sys.time()))
+  sprng.seed <- round(2^32 * runif(1))
+  print(paste("Using as seed for SPRNG", sprng.seed))
+  clusterSetupSPRNG(eval(parse(text = nameCluster)), seed = sprng.seed)
   clusterEvalQ(eval(parse(text = nameCluster)), library(randomForest))
   clusterEvalQ(eval(parse(text = nameCluster)), library(varSelRF))
 }
@@ -121,23 +122,24 @@ varSelRF <- function(xdata, Class,
 
     
     if(!is.null(fitted.rf)) {
-      if(ncol(fitted.rf) < 2)
-        stop("The fitted rf was not fitted with importance = TRUE")
-      n.ntree <- fitted.rf$ntree
-      mtry <- fitted.rf$mtry
-      n.mtryFactor <- mtry/sqrt(ncol(xdata))
-      if((n.ntree != ntree) | (n.mtryFactor != mtryFactor))
-        warning("Using as ntree and mtry the parameters obtained from fitted.rf",
-                immediate.= TRUE)
-      ntree <- n.ntree
-      mtryFactor <- n.mtryFactor
-      rm(n.ntree, n.mtryFactor)
+        if(ncol(fitted.rf$importance) < 2)
+            stop("The fitted rf was not fitted with importance = TRUE")
+        n.ntree <- fitted.rf$ntree
+        mtry <- fitted.rf$mtry
+        n.mtryFactor <- mtry/sqrt(ncol(xdata))
+        if((n.ntree != ntree) | (n.mtryFactor != mtryFactor))
+            warning("Using as ntree and mtry the parameters obtained from fitted.rf",
+                    immediate.= TRUE)
+        ntree <- n.ntree
+        mtryFactor <- n.mtryFactor
+        rm(n.ntree, n.mtryFactor)
+        rf <- fitted.rf
     } else {
-      mtry <- floor(sqrt(ncol(xdata)) * mtryFactor)
-      rf <- randomForest(x = xdata, y = Class,
-                         ntree = ntree, mtry = mtry,
-                         importance = TRUE,
-                         keep.forest = FALSE)
+        mtry <- floor(sqrt(ncol(xdata)) * mtryFactor)
+        rf <- randomForest(x = xdata, y = Class,
+                           ntree = ntree, mtry = mtry,
+                           importance = TRUE,
+                           keep.forest = FALSE)
     }
     
     if(returnFirstForest)
@@ -145,8 +147,8 @@ varSelRF <- function(xdata, Class,
     else
         FirstForest <- NULL
     
-#    rf <- randomForest(x = xdata, y = Class, importance= TRUE,
-#                       ntree = ntree, keep.forest = FALSE)
+                                        #    rf <- randomForest(x = xdata, y = Class, importance= TRUE,
+                                        #                       ntree = ntree, keep.forest = FALSE)
     m.iterated.ob.error <- m.initial.ob.error <- oobError(rf)
     sd.iterated.ob.error <- sd.initial.ob.error <-
         sqrt(m.iterated.ob.error * (1 - m.iterated.ob.error) *
@@ -349,7 +351,12 @@ print.varSelRF <- function(x, ...) {
 #summary.varSelRF <- print.varSelRF
 
 plot.varSelRF <- function(x, nvar = NULL, ...) {
-    op <- par(ask = TRUE, las = 1)
+    if(dev.interactive()) {
+        op <- par(ask = TRUE, las = 1)
+    } else {
+        op <- par(las = 1)
+    }
+    
     on.exit(par(op))
     
     if(is.null(nvar))
@@ -756,7 +763,7 @@ varSelRFBoot <- function(xdata, Class,
 
 
 print.varSelRFBoot <- function(x, ...) {
-    cat("\n\n Random Forest from all data \n")
+    cat("\n\n Variable selection with random forest \n")
     cat(" ------------------------------\n")
 ##    cat("\n\n randomForest summary \n")
 ##    print(object$all.data.randomForest)
@@ -792,7 +799,7 @@ summary.varSelRFBoot <- function(object,
                                  return.class.probs = TRUE,
                                  return.var.freqs.b.models = TRUE,
                                  ...) {
-    cat("\n\n Random Forest from all data \n")
+    cat("\n\n Variable selection using all data \n")
     cat(" ------------------------------\n")
 ###    cat("\n\n randomForest summary \n")
 ###    print(object$all.data.randomForest)
@@ -809,6 +816,9 @@ summary.varSelRFBoot <- function(object,
         object$resubstitution.error, "\n")
     cat("\n\n Leave-one-out bootstrap error:                 ",
         object$leave.one.out.bootstrap.error, "\n")
+    nk <- as.vector(table(object$class))
+    cat("\n\n Error rate at random:                          ",
+        1 - (max(nk)/sum(nk)), "\n")
     cat("\n\n Number of vars in bootstrapped forests:        \n")
     print(summary(object$number.of.vars))
     cat
@@ -841,7 +851,7 @@ summary.varSelRFBoot <- function(object,
     
     if(return.class.probs)
         cat("\n\n Mean class membership probabilities from out of bag samples\n")
-    if(return.class.probs || plotFreqs) {
+    if(return.class.probs) {
         mean.class.probs <- apply(object$prob.predictions, c(1, 2),
                                   function(x) mean(x, na.rm = TRUE))
         colnames(mean.class.probs) <- levels(object$class)
@@ -864,7 +874,11 @@ plot.varSelRFBoot <- function(x,
                                   function(x) mean(x, na.rm = TRUE))
         colnames(mean.class.probs) <- levels(x$class)
         rainbow.col <- rainbow(nlevels(x$class))
-        op <- par(ask = TRUE, las = 1)
+	if(dev.interactive()) {
+              op <- par(ask = TRUE, las = 1)
+    	} else {
+               op <- par(las = 1)
+    	}
         on.exit(par(op))
 ####        for(i in 1:ncol(mean.class.probs)) {
         if(is.null(class.to.plot))
@@ -945,7 +959,7 @@ plot.varSelRFBoot <- function(x,
              log = "x",
              col = "red", lwd = 2,
              main = "OOB Error rate vs. Number of variables in predictor",
-             xlim = c(1, max(ngenes)*1.1))
+             xlim = c(2, max(ngenes)*1.1))
 ###             plot(num.points.plot:1,
 ###                  x$allBootRuns[[1]]$other$trained.pam.cv$error,
 ###                  type = "l", axes = FALSE, xlab = "Number of genes",
@@ -959,9 +973,9 @@ plot.varSelRFBoot <- function(x,
 ##        axis(1)
         
         if(max(ngenes) > 300)
-            axis(1, at = c(1, 2, 3, 5, 8, 15, 20, 25, 35,
+            axis(1, at = c(2, 3, 5, 8, 15, 20, 25, 35,
                     50, 75, 150, 200, 300),
-                 labels = c(1, 2, 3, 5, 8, 15, 10, 25, 35,
+                 labels = c(2, 3, 5, 8, 15, 10, 25, 35,
                  50, 75, 150, 200, 300))
 
         for(nb in 1:x$number.of.bootsamples)
@@ -1128,7 +1142,7 @@ randomVarImpsRFplot <- function(randomImportances,
                                 screeRandom = TRUE,
                                 lwdBlack = 1.5,
                                 lwdRed = 2,
-                                lwdGreen = 1,
+                                lwdLightblue = 1,
                                 cexPoint = 1,
                                 overlayTrue = FALSE,
                                 xlab = NULL,
@@ -1231,7 +1245,7 @@ randomVarImpsRFplot <- function(randomImportances,
     }
 
     matlines(randomImportances[, -column.of.mean],
-             col = "green", lwd = lwdGreen, lty = 1)
+             col = "lightblue", lwd = lwdLightblue, lty = 1)
     lines(x = 1:nvars,
           y = randomImportances[, column.of.mean],
           lwd = lwdRed, col = "red")

@@ -13,7 +13,7 @@ randomVarImpsRFplot(randomImportances, forest,
                     main = NULL, screeRandom = TRUE,
                     lwdBlack = 1.5,
                     lwdRed = 2,
-                    lwdGreen = 1,
+                    lwdLightblue = 1,
                     cexPoint = 1,
                     overlayTrue = FALSE,
                     xlab = NULL,
@@ -52,7 +52,7 @@ randomVarImpsRFplot(randomImportances, forest,
     the original data set.}
   \item{lwdRed}{ The width of the line to use for the average of the
     importances for the permuted data sets. }
-  \item{lwdGreen}{ The width of the line for the importances for the
+  \item{lwdLightblue}{ The width of the line for the importances for the
     individual permuted data sets.}
   \item{cexPoint}{ \code{cex} argument for the points for the
     importances from the original data set.}
