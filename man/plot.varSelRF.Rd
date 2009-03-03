@@ -1,19 +1,20 @@
 \name{plot.varSelRF}
 \alias{plot.varSelRF}
-%- Also NEED an '\alias' for EACH other topic documented here.
 \title{Plot a varSelRF object}
 \description{
   Plots a varSelRF object, showing the initial variable importances, and
   the change in OOB error with the number of variables.}
 \usage{
-plot.varSelRF(x, nvar = NULL, ...)
+\method{plot}{varSelRF}(x, nvar = NULL, which = c(1, 2), ...)
 }
-%- maybe also 'usage' for other objects documented here.
-\arguments{
+\arguments{ 
   \item{x}{The varSelRF object.}
   \item{nvar}{The number of variables for which the initial variable
     importances should be shown. By default, only the 30 with the
     largest importance are shown.}
+  \item{which}{which plots should be drawn, either \code{1} (for the initial
+    variable importance plot), \code{2} (for the change in OOB error with the
+    number of variables) or \code{c(1,2)} for drawing both plots}
   \item{\dots}{Not used.}
 }
 \value{This function is only used for its side effect of producing plots.
@@ -24,7 +25,7 @@ plot.varSelRF(x, nvar = NULL, ...)
     expression
     data. Tech. report. \url{http://ligarto.org/rdiaz/Papers/rfVS/randomForestVarSel.html}
 }
-\author{Ramon Diaz-Uriarte \email{rdiaz@ligarto.org}}
+\author{Ramon Diaz-Uriarte \email{rdiaz02@gmail.com}}
 \section{Warning }{The OOB Error rate is biased down (and can be
   severely biased down) because we do (potentially many) rounds of
   reducing the set of predictor variables until we minimize this OOB
