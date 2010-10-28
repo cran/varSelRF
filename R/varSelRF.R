@@ -56,7 +56,8 @@ basicClusterInit <- function(clusterNumberNodes = 1,
   if(!(typeCluster %in% c("MPI", "PVM"))) stop("typeCluster needs to be PVM or MPI")
   library(snow)
   if(typeCluster == "MPI") {
-      library(Rmpi)
+    print("Make sure you have the Rmpi package installed and configure your cluster if needed")
+    ## library(Rmpi)
   }
   if(typeCluster == "PVM") {
       print("Make sure you have rpvm installed. We have only checked with Rmpi. Then do library(rpvm)")
@@ -95,7 +96,8 @@ varSelRF <- function(xdata, Class,
                      recompute.var.imp = FALSE,
                      verbose = FALSE,
                      returnFirstForest = TRUE,
-                     fitted.rf = NULL) {
+                     fitted.rf = NULL,
+                     keep.forest = FALSE) {
 
     if(!is.factor(Class))
         stop("Class should be a factor")
@@ -139,7 +141,7 @@ varSelRF <- function(xdata, Class,
         rf <- randomForest(x = xdata, y = Class,
                            ntree = ntree, mtry = mtry,
                            importance = TRUE,
-                           keep.forest = FALSE)
+                           keep.forest = keep.forest)
     }
     
     if(returnFirstForest)
@@ -244,12 +246,12 @@ varSelRF <- function(xdata, Class,
             rf <- randomForest(x = xdata[, selected.vars],
                                y = Class, importance= TRUE,
                                ntree = ntree, mtry = mtry,
-                               keep.forest = FALSE)
+                               keep.forest = keep.forest)
         else
             rf <- randomForest(x = xdata[, selected.vars],
                                y = Class, importance= FALSE,
                                ntree = ntreeIterat, mtry = mtry,
-                               keep.forest = FALSE)
+                               keep.forest = keep.forest)
         
         m.iterated.ob.error <- oobError(rf)
         sd.iterated.ob.error <-
