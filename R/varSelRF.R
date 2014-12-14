@@ -1,87 +1,6 @@
 #### watch out use of "..." inside Boot function
 
-
-#### the "<<-" in the parallelized stuff? The logic is:
-####    a) we could pass the arguments explicitly as part of
-####       clusterApplyLB but for those objects that means
-####       repeatedly passing to the same slave node
-####       (e.g., 200 bootstrap samples, and only 4 nodes)
-####       a very large object.
-
-####    b) using the "<<-" results in important speed savings
-####       at least in some tests I did.
-
-####    c) just in case, right before the "<<-" I delete all objects
-####       with same name;
-
-####    d) the user is unlikely to store objects of his/her own
-####       creation in the slave nodes; thus, one of the biggest
-####       problems of "<<-" disappears.
-
-####    However, just in case we:
-####       e.1. Use an unlikely name
-####       e.2. Verify, when the cluster is initialized, that there is no
-####            object in any node with that name, and refuse to run unless
-####            the problem is fixed.
-
-
-
 #####   in bootSimplifyRF maybe allow allBootRuns = NULL so that object is small.
-
-
-
-####usingCluster <- TRUE
-####if(usingCluster) {
-####    library(snow)
-####    library(Rmpi)
-####    clusterNumberNodes <- 1
-####    typeCluster <- "MPI"
-####    TheCluster <- makeCluster(clusterNumberNodes,
-####                              type = typeCluster)
-####    clusterSetupSPRNG(TheCluster, seed = as.numeric(Sys.time()))
-####    clusterEvalQ(TheCluster, library(randomForest))
-####}
-
-
-require(randomForest)
-
-
-basicClusterInit <- function(clusterNumberNodes = 1,
-                             nameCluster = "TheCluster",
-                             typeCluster = "MPI") {
-    ## Initialize a cluster
-  ## Note that Rmpi already checks if another cluster is up and running,
-  ## so we do not need to do that.
-
-  if(!(typeCluster %in% c("MPI", "PVM"))) stop("typeCluster needs to be PVM or MPI")
-  library(snow)
-  if(typeCluster == "MPI") {
-    print("Make sure you have the Rmpi package installed and configure your cluster if needed")
-    ## library(Rmpi)
-  }
-  if(typeCluster == "PVM") {
-      print("Make sure you have rpvm installed. We have only checked with Rmpi. Then do library(rpvm)")
-  }
-  if(length(find(nameCluster)))
-      stop("\nThere is another object called ", nameCluster,".\n",
-           "This could mean that a cluster with that name already exists;\n",
-           "   in this case, please use the existing cluster \n",
-           "   ---you do not need to initialize the cluster, \n",
-           "   just pass its name as the parameter for 'nameCluster'---\n",
-           "   or stop that cluster and initialize a new one. \n",
-           "It could also mean that there is\n",
-           "   already an object with this name; either remove the object\n",
-           "   or use another name for the cluster.\n")
-  assign(nameCluster,
-         makeCluster(clusterNumberNodes,
-                     type = typeCluster),
-         env = .GlobalEnv)    
-  sprng.seed <- round(2^32 * runif(1))
-  print(paste("Using as seed for SPRNG", sprng.seed))
-  clusterSetupSPRNG(eval(parse(text = nameCluster)), seed = sprng.seed)
-  clusterEvalQ(eval(parse(text = nameCluster)), library(randomForest))
-  clusterEvalQ(eval(parse(text = nameCluster)), library(varSelRF))
-}
 
 
 
@@ -422,34 +341,6 @@ varSelRFBoot <- function(xdata, Class,
     ## beware there is a lot of data copying... pass by reference, or
     ## minimize copying or something.
     
-    if(usingCluster & is.null(TheCluster)) {
-        basicClusterInit()
-        warning("Initializing a one-slave MPI cluster called \"TheCluster\"\n",
-                "For more control, pass the name for the cluster, \n",
-                "after initializing with basicClusterInit.\n",
-                "It is much, much better if you explicitly set the parameters\n",
-                "you want for your cluster (name, type, and number of nodes)\n",
-                immediate.= TRUE)
-      }
-    if(usingCluster & !is.null(TheCluster)) {
-      cat("\n Using as cluster ", deparse(substitute(TheCluster)))
-      if(!length(find(deparse(substitute(TheCluster)))))
-          stop("\nOoops, but", TheCluster, "does not yet exist.\n",
-               "Please create it using basicClusterInit.")
-    }
-    if(usingCluster) {
-      test.presence1 <-
-        clusterEvalQ(TheCluster,
-                     length(find("xdataTheCluster")))
-      test.presence2 <-
-        clusterEvalQ(TheCluster,
-                     length(find("ClassTheCluster")))
-      if(any(as.logical(unlist(test.presence1))))
-        stop("At least one slave node has an object called xdataTheCluster")
-      if(any(as.logical(unlist(test.presence2))))
-        stop("At least one slave node has an object called ClassTheCluster")
-##      clusterExport(TheCluster, c("varSelRF"))
-    }
 
     if(is.null(colnames(xdata)))
         colnames(xdata) <- paste("v", 1:dim(xdata)[2], sep ="")
@@ -506,12 +397,14 @@ varSelRFBoot <- function(xdata, Class,
     vars.in.solutions <- vector()
 ##    solutions <- rep(NA, bootnumber)
     
-    bootTrainTest <- function(dummy, 
-                              c.sd,
-                              mtryFactor,
-                              ntree, ntreeIterat,
-                              whole.range, recompute.var.imp,
-                              ...) {
+    bootTrainTest <- function(dummy,
+        xdataTheCluster,
+        ClassTheCluster,
+        c.sd,
+        mtryFactor,
+        ntree, ntreeIterat,
+        whole.range, recompute.var.imp,
+        ...) {
         N <- length(ClassTheCluster)
         sample.again <- TRUE
         while(sample.again) {
@@ -588,16 +481,12 @@ varSelRFBoot <- function(xdata, Class,
           gc()
         }
         
-        clusterEvalQ(TheCluster,
-                     rm(list = c("xdataTheCluster", "ClassTheCluster")))
-        xdataTheCluster <<- xdata
-        ClassTheCluster <<- Class
-        clusterExport(TheCluster,
-                      c("xdataTheCluster", "ClassTheCluster"))
         cat("\n      Running bootstrap iterations using cluster (can take a while)\n")
         boot.runs <- clusterApplyLB(TheCluster,
                                     1:bootnumber,
                                     bootTrainTest,
+                                    xdataTheCluster = xdata,
+                                    ClassTheCluster = Class,
                                     c.sd = c.sd,
                                     mtryFactor = mtryFactor,
                                     ntree = ntree,
@@ -617,6 +506,8 @@ varSelRFBoot <- function(xdata, Class,
             cat(".")
             boot.runs[[nboot]] <-
                 bootTrainTest(nboot,
+                              xdataTheCluster = xdata,
+                              ClassTheCluster = Class,
                               c.sd = c.sd,
                               mtryFactor = mtryFactor,
                               ntree = ntree,
@@ -753,7 +644,7 @@ print.varSelRFBoot <- function(x, ...) {
 
 ## zz: pass gene names and subject names??
 ## look at examples from ~/Proyectos/Signatures/Symposum/boot.pamr.knn.dlda.R
-## o similar bajo Gema Moreno
+## o similar 
 ## Or not, because I think I am ussing column names
 ## but look at that code anyway for improvements
 
@@ -968,35 +859,6 @@ randomVarImpsRF <- function(xdata, Class, forest, numrandom = 100,
       stop("whichImp contains a non-valid option; should be one or more \n",
            "of impsScaled, impsUnscaled, impsGini")
 
-  if(usingCluster & is.null(TheCluster)) {
-      basicClusterInit()
-      warning("Initializing a one-slave MPI cluster called \"TheCluster\"\n",
-              "For more control, pass the name for the cluster, \n",
-              "after initializing with basicClusterInit.\n",
-              "It is much, much better if you explicitly set the parameters\n",
-              "you want for your cluster (name, type, and number of nodes)\n",
-              immediate. = TRUE)
-  }
-  if(usingCluster & !is.null(TheCluster)) {
-    print(paste("Using as cluster ", deparse(substitute(TheCluster))))
-    if(!length(find(deparse(substitute(TheCluster)))))
-      stop("\nOoops, but", TheCluster, "does not yet exist.\n",
-           "Please create it using basicClusterInit.")
-  }
-
-  if(usingCluster) {
-    test.presence1 <-
-      clusterEvalQ(TheCluster,
-                   length(find("xdataTheCluster")))
-    test.presence2 <-
-      clusterEvalQ(TheCluster,
-                   length(find("ClassTheCluster")))
-    if(any(as.logical(unlist(test.presence1))))
-      stop("At least one slave node has an object called xdataTheCluster")
-    if(any(as.logical(unlist(test.presence2))))
-      stop("At least one slave node has an object called ClassTheCluster")
-###    clusterExport(TheCluster,  )
-  }
   
   ontree <- forest$ntree
   omtry <- forest$mtry
@@ -1004,7 +866,8 @@ randomVarImpsRF <- function(xdata, Class, forest, numrandom = 100,
   nodesize <- 1
   
   if(usingCluster) {
-      iRF.cluster <- function(dummy, ontree, omtry, nodesize, ...) {
+      iRF2.cluster <- function(dummy, xdataTheCluster, ClassTheCluster,
+                               ontree, omtry, nodesize, ...) {
         rf <- randomForest(x = xdataTheCluster,
                            y = sample(ClassTheCluster),
                            ntree = ontree,
@@ -1028,21 +891,17 @@ randomVarImpsRF <- function(xdata, Class, forest, numrandom = 100,
                     impsUnscaled,
                     impsGini))
     }
-      clusterEvalQ(TheCluster,
-                   rm(list = c("xdataTheCluster", "ClassTheCluster")))
-      xdataTheCluster <<- xdata
-      ClassTheCluster <<- Class
-      clusterExport(TheCluster,
-                    c("xdataTheCluster", "ClassTheCluster"))
-      cat("\n Obtaining random importances using cluster (might take a while)\n")
+      
       outCl <- clusterApplyLB(TheCluster,
                               1:numrandom,
-                              iRF.cluster,
+                              iRF2.cluster,
+                              xdataTheCluster = xdata,
+                              ClassTheCluster = Class,
                               ontree = ontree,
                               omtry = omtry,
                               nodesize = nodesize)
-      clusterEvalQ(TheCluster,
-                   rm(list = c("xdataTheCluster", "ClassTheCluster")))
+
+
       
   } else {
       outCl <- list()
@@ -1500,78 +1359,78 @@ tableSummary.varSelRFBoot <- function(object, name){
 
 
 
-rVI <- function(xdata, ydata, forest, numrandom = 40,
-                whichImp = "impsUnscaled",
-                ...) {
-    ## from randomVarImpsRF, but simplified to use only
-    ## one tytpe of importance
+## rVI <- function(xdata, ydata, forest, numrandom = 40,
+##                 whichImp = "impsUnscaled",
+##                 ...) {
+##     ## from randomVarImpsRF, but simplified to use only
+##     ## one tytpe of importance
     
-    ontree <- forest$ntree
-    omtry <- forest$mtry
+##     ontree <- forest$ntree
+##     omtry <- forest$mtry
 
-    if(usingCluster) {
-        iRF.cluster <- function(dummy, ontree, omtry, ...) {
-            rf <- randomForest(x = xdataTheCluster,
-                               y = sample(ClassTheCluster),
-                               ntree = ontree,
-                               mtry = omtry,
-                               importance = TRUE, keep.forest = FALSE,
-                               ...)
-            imps <- switch(whichImp,
-                           "impsUnscaled" =
-                           importance(rf, type = 1, scale = FALSE),
-                           "impsScaled" =
-                           importance(rf, type = 1, scale = TRUE),
-                           "impsGini" =
-                           rf$importance[, ncol(rf$importance)]
-                           )
-            if(is.null(imps))
-                stop("\n Not valid 'whichImp' \n")
-            return(imps)
-        }
-        clusterEvalQ(TheCluster,
-                     rm(list = c("xdataTheCluster", "ClassTheCluster")))
-        xdataTheCluster <<- xdata
-        ClassTheCluster <<- ydata
-        clusterExport(TheCluster,
-                      c("xdataTheCluster", "ClassTheCluster"))
-        outCl <- clusterApplyLB(TheCluster,
-                                1:numrandom,
-                                iRF.cluster,
-                                ontree = ontree,
-                                omtry = omtry)
+##     if(usingCluster) {
+##         iRF.cluster <- function(dummy, ontree, omtry, ...) {
+##             rf <- randomForest(x = xdataTheCluster,
+##                                y = sample(ClassTheCluster),
+##                                ntree = ontree,
+##                                mtry = omtry,
+##                                importance = TRUE, keep.forest = FALSE,
+##                                ...)
+##             imps <- switch(whichImp,
+##                            "impsUnscaled" =
+##                            importance(rf, type = 1, scale = FALSE),
+##                            "impsScaled" =
+##                            importance(rf, type = 1, scale = TRUE),
+##                            "impsGini" =
+##                            rf$importance[, ncol(rf$importance)]
+##                            )
+##             if(is.null(imps))
+##                 stop("\n Not valid 'whichImp' \n")
+##             return(imps)
+##         }
+##         clusterEvalQ(TheCluster,
+##                      rm(list = c("xdataTheCluster", "ClassTheCluster")))
+##         xdataTheCluster <<- xdata
+##         ClassTheCluster <<- ydata
+##         clusterExport(TheCluster,
+##                       c("xdataTheCluster", "ClassTheCluster"))
+##         outCl <- clusterApplyLB(TheCluster,
+##                                 1:numrandom,
+##                                 iRF.cluster,
+##                                 ontree = ontree,
+##                                 omtry = omtry)
 
-    } else {
-        outCl <- list()
-        for(nriter in 1:numrandom) {
-            rf <- randomForest(x = xdata,
-                               y = sample(ydata),
-                               ntree = ontree,
-                               mtry = omtry,
-                               importance = TRUE,
-                               keep.forest = FALSE,
-                               ...)
-            imps <- switch(whichImp,
-                           "impsUnscaled" =
-                           importance(rf, type = 1, scale = FALSE),
-                           "impsScaled" =
-                           importance(rf, type = 1, scale = TRUE),
-                           "impsGini" =
-                           rf$importance[, ncol(rf$importance)]
-                           )
-            if(is.null(imps))
-                stop("\n Not valid 'whichImp' \n")
-            outCl[[nriter]] <- imps
-        }
-    }
+##     } else {
+##         outCl <- list()
+##         for(nriter in 1:numrandom) {
+##             rf <- randomForest(x = xdata,
+##                                y = sample(ydata),
+##                                ntree = ontree,
+##                                mtry = omtry,
+##                                importance = TRUE,
+##                                keep.forest = FALSE,
+##                                ...)
+##             imps <- switch(whichImp,
+##                            "impsUnscaled" =
+##                            importance(rf, type = 1, scale = FALSE),
+##                            "impsScaled" =
+##                            importance(rf, type = 1, scale = TRUE),
+##                            "impsGini" =
+##                            rf$importance[, ncol(rf$importance)]
+##                            )
+##             if(is.null(imps))
+##                 stop("\n Not valid 'whichImp' \n")
+##             outCl[[nriter]] <- imps
+##         }
+##     }
     
-    randomVarImps <- matrix(unlist(outCl), ncol = numrandom)
-    rownames(randomVarImps) <- rownames(forest$importance)
-    colnames(randomVarImps) <- 1:numrandom
-    class(randomVarImps) <- c(class(randomVarImps),
-                              "rVI")
-    return(randomVarImps)
-}
+##     randomVarImps <- matrix(unlist(outCl), ncol = numrandom)
+##     rownames(randomVarImps) <- rownames(forest$importance)
+##     colnames(randomVarImps) <- 1:numrandom
+##     class(randomVarImps) <- c(class(randomVarImps),
+##                               "rVI")
+##     return(randomVarImps)
+## }
 
 
 ##### old stuff
@@ -1671,342 +1530,345 @@ rVI <- function(xdata, ydata, forest, numrandom = 40,
 
 ### This version allows optimizing mtry and ntree; leave code here,
 ### but don't use.
-ExpedrimentalvarSelRF <- function(xdata, Class, vars.drop.num = NULL,
-                     vars.drop.frac = 0.5,
-                     c.sd = 1,
-                     whole.range = TRUE,
-                     recompute.var.imp = FALSE,
-                     verbose = FALSE,
-                     returnFirstForest = TRUE,
-                     ## next are all for tune2RF
-                     ## but this is a mess; should pass them as
-                     ## control.
-                     tuneMtry = FALSE, tuneNtree = FALSE,
-                     startNtree = 1000, startMtryFactor = 1,
-                     stepFactorMtry = 1.25,
-                     stepFactorNtree = 1.75,
-                     minCorNtree = 0.975,
-                     quantNtree = 0.025,
-                     returnForest = TRUE,
-                     ntreeTry = 2000) {
 
-    if( (is.null(vars.drop.num) & is.null(vars.drop.frac)) |
-       (!is.null(vars.drop.num) & !is.null(vars.drop.frac)))
-        stop("One (and only one) of vars.drop.frac and vars.drop.num must be NULL and the other set")
+## FIXME: uncomment, but fix global function uses. And add examples.
+
+## ExperimentalvarSelRF <- function(xdata, Class, vars.drop.num = NULL,
+##                      vars.drop.frac = 0.5,
+##                      c.sd = 1,
+##                      whole.range = TRUE,
+##                      recompute.var.imp = FALSE,
+##                      verbose = FALSE,
+##                      returnFirstForest = TRUE,
+##                      ## next are all for tune2RF
+##                      ## but this is a mess; should pass them as
+##                      ## control.
+##                      tuneMtry = FALSE, tuneNtree = FALSE,
+##                      startNtree = 1000, startMtryFactor = 1,
+##                      stepFactorMtry = 1.25,
+##                      stepFactorNtree = 1.75,
+##                      minCorNtree = 0.975,
+##                      quantNtree = 0.025,
+##                      returnForest = TRUE,
+##                      ntreeTry = 2000) {
+
+##     if( (is.null(vars.drop.num) & is.null(vars.drop.frac)) |
+##        (!is.null(vars.drop.num) & !is.null(vars.drop.frac)))
+##         stop("One (and only one) of vars.drop.frac and vars.drop.num must be NULL and the other set")
     
 
-    max.num.steps <- dim(xdata)[2]
-    num.subjects <- dim(xdata)[1]
+##     max.num.steps <- dim(xdata)[2]
+##     num.subjects <- dim(xdata)[1]
 
-    if(is.null(colnames(xdata)))
-        colnames(xdata) <- paste("v", 1:dim(xdata)[2], sep ="")
+##     if(is.null(colnames(xdata)))
+##         colnames(xdata) <- paste("v", 1:dim(xdata)[2], sep ="")
     
-    ##oversize the vectors; will prune later.
-    n.vars <- vars <- OOB.rf <- OOB.sd <- rep(NA, max.num.steps)
+##     ##oversize the vectors; will prune later.
+##     n.vars <- vars <- OOB.rf <- OOB.sd <- rep(NA, max.num.steps)
     
-    ## First get optimal values for mtry and ntree, and get first run:
+##     ## First get optimal values for mtry and ntree, and get first run:
     
-    rf <- tune2RF(x = xdata, y = Class,
-                  tuneMtry = tuneMtry, tuneNtree = tuneNtree,
-                  startNtree = startNtree, mtryFactor = mtryFactor,
-                  stepFactorMtry = stepFactorMtry,
-                  stepFactorNtree = stepFactorNtree,
-                  minCorNtree = minCorNtree,
-                  quantNtree = quantNtree,
-                  returnForest = TRUE,
-                  ntreeTry = ntreeTry,
-                  verbose = verbose)
+##     rf <- tune2RF(x = xdata, y = Class,
+##                   tuneMtry = tuneMtry, tuneNtree = tuneNtree,
+##                   startNtree = startNtree, mtryFactor = mtryFactor,
+##                   stepFactorMtry = stepFactorMtry,
+##                   stepFactorNtree = stepFactorNtree,
+##                   minCorNtree = minCorNtree,
+##                   quantNtree = quantNtree,
+##                   returnForest = TRUE,
+##                   ntreeTry = ntreeTry,
+##                   verbose = verbose)
 
-    ## We'll need it for future runs
-    ntree <- rf$ntree
-    mtry <- rf$mtry
+##     ## We'll need it for future runs
+##     ntree <- rf$ntree
+##     mtry <- rf$mtry
 
-    if(returnFirstForest)
-        FirstForest <- rf
-    else
-        FirstForest <- NULL
+##     if(returnFirstForest)
+##         FirstForest <- rf
+##     else
+##         FirstForest <- NULL
     
-#    rf <- randomForest(x = xdata, y = Class, importance= TRUE,
-#                       ntree = ntree, keep.forest = FALSE)
-    m.iterated.ob.error <- m.initial.ob.error <- oobError(rf)
-    sd.iterated.ob.error <- sd.initial.ob.error <-
-        sqrt(m.iterated.ob.error * (1 - m.iterated.ob.error) * (1/num.subjects))
+## #    rf <- randomForest(x = xdata, y = Class, importance= TRUE,
+## #                       ntree = ntree, keep.forest = FALSE)
+##     m.iterated.ob.error <- m.initial.ob.error <- oobError(rf)
+##     sd.iterated.ob.error <- sd.initial.ob.error <-
+##         sqrt(m.iterated.ob.error * (1 - m.iterated.ob.error) * (1/num.subjects))
 
-    if(verbose) {
-        print(paste("Initial OOB error: mean = ", round(m.initial.ob.error, 4),
-                    "; sd = ", round(sd.initial.ob.error, 4), sep = ""))
-    }
+##     if(verbose) {
+##         print(paste("Initial OOB error: mean = ", round(m.initial.ob.error, 4),
+##                     "; sd = ", round(sd.initial.ob.error, 4), sep = ""))
+##     }
 
-### previous code (before rF < 4.3.1)
-    #selected.vars <- order(rf$importance[, (ncol(rf$importance) - 1)], decreasing = TRUE)
-#    ordered.importance <- rf$importance[selected.vars,(ncol(rf$importance) -1)]
+## ### previous code (before rF < 4.3.1)
+##     #selected.vars <- order(rf$importance[, (ncol(rf$importance) - 1)], decreasing = TRUE)
+## #    ordered.importance <- rf$importance[selected.vars,(ncol(rf$importance) -1)]
 
-    importances <- importance(rf, type = 1, scale = FALSE)
-    selected.vars <- order(importances, decreasing = TRUE)
-    ordered.importances <- importances[selected.vars]
+##     importances <- importance(rf, type = 1, scale = FALSE)
+##     selected.vars <- order(importances, decreasing = TRUE)
+##     ordered.importances <- importances[selected.vars]
     
-    initialImportances <- importances
-    initialOrderedImportances <- ordered.importances
+##     initialImportances <- importances
+##     initialOrderedImportances <- ordered.importances
     
-    j <- 1
-    n.vars[j] <- dim(xdata)[2] 
-    vars[j] <- paste(colnames(xdata), collapse = " + ")
-    OOB.rf[j] <- m.iterated.ob.error
-    OOB.sd[j] <- sd.iterated.ob.error
+##     j <- 1
+##     n.vars[j] <- dim(xdata)[2] 
+##     vars[j] <- paste(colnames(xdata), collapse = " + ")
+##     OOB.rf[j] <- m.iterated.ob.error
+##     OOB.sd[j] <- sd.iterated.ob.error
 
-    var.simplify <- TRUE
+##     var.simplify <- TRUE
     
-    while(var.simplify) {
-        last.rf <- rf
-        last.vars <- selected.vars
-#        print(paste(".........Number of variables before selection",
-#                    dim(xdata)[2])) ## debug
-        previous.m.error <- m.iterated.ob.error
-        previous.sd.error <- sd.iterated.ob.error
+##     while(var.simplify) {
+##         last.rf <- rf
+##         last.vars <- selected.vars
+## #        print(paste(".........Number of variables before selection",
+## #                    dim(xdata)[2])) ## debug
+##         previous.m.error <- m.iterated.ob.error
+##         previous.sd.error <- sd.iterated.ob.error
 
-        if(recompute.var.imp & (j > 1)) {
-            ## need to set indexes as absolute w.r.t. original data
-####            tmp.order <- order(rf$importance[, (ncol(rf$importance) - 1)],
-####                                    decreasing = TRUE)
-####            selected.vars <- selected.vars[tmp.order]
-####            ordered.importance <- rf$importance[tmp.order, (ncol(rf$importance) -1)]
+##         if(recompute.var.imp & (j > 1)) {
+##             ## need to set indexes as absolute w.r.t. original data
+## ####            tmp.order <- order(rf$importance[, (ncol(rf$importance) - 1)],
+## ####                                    decreasing = TRUE)
+## ####            selected.vars <- selected.vars[tmp.order]
+## ####            ordered.importance <- rf$importance[tmp.order, (ncol(rf$importance) -1)]
 
-            importances <- importance(rf, type = 1, scale = FALSE)
-            tmp.order <- order(importances, decreasing = TRUE)
-            selected.vars <- selected.vars[tmp.order]
-            ordered.importances <- importances[tmp.order]
+##             importances <- importance(rf, type = 1, scale = FALSE)
+##             tmp.order <- order(importances, decreasing = TRUE)
+##             selected.vars <- selected.vars[tmp.order]
+##             ordered.importances <- importances[tmp.order]
 
-        }
+##         }
         
-        num.vars <- length(selected.vars)
+##         num.vars <- length(selected.vars)
   
-####        if(any(is.na(ordered.importances))) {
-####            print("**********  Nas in ordered.importances ******")
-####            browser()
-####        }
+## ####        if(any(is.na(ordered.importances))) {
+## ####            print("**********  Nas in ordered.importances ******")
+## ####            browser()
+## ####        }
            
-        if(any(ordered.importances < 0)) {
-            selected.vars <- selected.vars[-which(ordered.importances < 0)]
-            ordered.importances <- ordered.importances[-which(ordered.importances < 0)]
-        } else {
-            if(is.null(vars.drop.num))
-                vars.drop <- round(num.vars * vars.drop.frac)
-            else vars.drop <- vars.drop.num
+##         if(any(ordered.importances < 0)) {
+##             selected.vars <- selected.vars[-which(ordered.importances < 0)]
+##             ordered.importances <- ordered.importances[-which(ordered.importances < 0)]
+##         } else {
+##             if(is.null(vars.drop.num))
+##                 vars.drop <- round(num.vars * vars.drop.frac)
+##             else vars.drop <- vars.drop.num
                 
-            if(num.vars >= (vars.drop + 2)) {
-                selected.vars <- selected.vars[1: (num.vars - vars.drop)]
-                ordered.importances <- ordered.importances[1: (num.vars - vars.drop)]
-            }
-            else {
-                selected.vars <- selected.vars[1:2]
-                ordered.importances <- ordered.importances[1:2]
-            }
-        }
-        ## couldn't we eliminate the following?
-        if((length(selected.vars) < 2) | (any(selected.vars < 1))) {
-            var.simplify <- FALSE
-            break
-        }
+##             if(num.vars >= (vars.drop + 2)) {
+##                 selected.vars <- selected.vars[1: (num.vars - vars.drop)]
+##                 ordered.importances <- ordered.importances[1: (num.vars - vars.drop)]
+##             }
+##             else {
+##                 selected.vars <- selected.vars[1:2]
+##                 ordered.importances <- ordered.importances[1:2]
+##             }
+##         }
+##         ## couldn't we eliminate the following?
+##         if((length(selected.vars) < 2) | (any(selected.vars < 1))) {
+##             var.simplify <- FALSE
+##             break
+##         }
 
-        if(length(selected.vars) <= 2) var.simplify <- FALSE
+##         if(length(selected.vars) <= 2) var.simplify <- FALSE
       
-        if(recompute.var.imp) 
-            rf <- randomForest(x = xdata[, selected.vars], y = Class, importance= TRUE,
-                               ntree = ntree, mtry = mtry, keep.forest = FALSE)
-        else
-            rf <- randomForest(x = xdata[, selected.vars], y = Class, importance= FALSE,
-                               ntree = ntree, mtry = mtry, keep.forest = FALSE)
+##         if(recompute.var.imp) 
+##             rf <- randomForest(x = xdata[, selected.vars], y = Class, importance= TRUE,
+##                                ntree = ntree, mtry = mtry, keep.forest = FALSE)
+##         else
+##             rf <- randomForest(x = xdata[, selected.vars], y = Class, importance= FALSE,
+##                                ntree = ntree, mtry = mtry, keep.forest = FALSE)
         
-        m.iterated.ob.error <- oobError(rf)
-        sd.iterated.ob.error <-
-            sqrt(m.iterated.ob.error * (1 - m.iterated.ob.error) * (1/num.subjects))
+##         m.iterated.ob.error <- oobError(rf)
+##         sd.iterated.ob.error <-
+##             sqrt(m.iterated.ob.error * (1 - m.iterated.ob.error) * (1/num.subjects))
         
-        if(verbose) {
-            print(paste("..... iteration ", j, "; OOB error: mean = ",
-                        round(m.iterated.ob.error, 4),
-                        "; sd = ", round(sd.iterated.ob.error, 4), sep = ""))
-        }
-        j <- j + 1
+##         if(verbose) {
+##             print(paste("..... iteration ", j, "; OOB error: mean = ",
+##                         round(m.iterated.ob.error, 4),
+##                         "; sd = ", round(sd.iterated.ob.error, 4), sep = ""))
+##         }
+##         j <- j + 1
 
         
-        n.vars[j] <- length(selected.vars)
-        vars[j] <- paste(colnames(xdata)[selected.vars],
-                         collapse = " + ")
-        OOB.rf[j] <- m.iterated.ob.error
-        OOB.sd[j] <- sd.iterated.ob.error
+##         n.vars[j] <- length(selected.vars)
+##         vars[j] <- paste(colnames(xdata)[selected.vars],
+##                          collapse = " + ")
+##         OOB.rf[j] <- m.iterated.ob.error
+##         OOB.sd[j] <- sd.iterated.ob.error
 
 
-        if(!whole.range &
-           (
-            (m.iterated.ob.error >
-             (m.initial.ob.error + c.sd*sd.initial.ob.error))
-            |
-            (m.iterated.ob.error >
-             (previous.m.error + c.sd*previous.sd.error)))
-           )
-            var.simplify <- FALSE
-    }
+##         if(!whole.range &
+##            (
+##             (m.iterated.ob.error >
+##              (m.initial.ob.error + c.sd*sd.initial.ob.error))
+##             |
+##             (m.iterated.ob.error >
+##              (previous.m.error + c.sd*previous.sd.error)))
+##            )
+##             var.simplify <- FALSE
+##     }
 
-    if (!whole.range) {
-        if(!is.null(colnames(xdata)))
-            selected.vars <- sort(colnames(xdata)[last.vars])
-        else
-            selected.vars <- last.vars
+##     if (!whole.range) {
+##         if(!is.null(colnames(xdata)))
+##             selected.vars <- sort(colnames(xdata)[last.vars])
+##         else
+##             selected.vars <- last.vars
 
-        out <- list(selec.history = data.frame(
-                    Number.Variables = n.vars,
-                    Vars.in.Forest = vars,
-                    OOB = OOB.rf,
-                    sd.OOB = OOB.sd)[1:j,],
-                    rf.model = last.rf,
-                    selected.vars = selected.vars,
-                    selected.model =  paste(selected.vars, collapse = " + "),
-                    best.model.nvars = length(selected.vars),
-                    initialImportances = initialImportances,
-                    initialOrderedImportances = initialOrderedImportances,
-                    ntree = ntree,
-                    mtry = mtry,
-                    firstForest = FirstForest)
-        class(out) <- "varSelRF"
-        return(out)
-    }
-    else {
-        n.vars <- n.vars[1:j]
-        vars <- vars[1:j]
-        OOB.rf<- OOB.rf[1:j]
-        OOB.sd <- OOB.sd[1:j]
-        ##browser()
-        min.oob.ci <- min(OOB.rf) + c.sd * OOB.sd[which.min(OOB.rf)]
-        best.pos <-
-            which(OOB.rf <= min.oob.ci)[which.min(n.vars[which(OOB.rf <= min.oob.ci)])]
+##         out <- list(selec.history = data.frame(
+##                     Number.Variables = n.vars,
+##                     Vars.in.Forest = vars,
+##                     OOB = OOB.rf,
+##                     sd.OOB = OOB.sd)[1:j,],
+##                     rf.model = last.rf,
+##                     selected.vars = selected.vars,
+##                     selected.model =  paste(selected.vars, collapse = " + "),
+##                     best.model.nvars = length(selected.vars),
+##                     initialImportances = initialImportances,
+##                     initialOrderedImportances = initialOrderedImportances,
+##                     ntree = ntree,
+##                     mtry = mtry,
+##                     firstForest = FirstForest)
+##         class(out) <- "varSelRF"
+##         return(out)
+##     }
+##     else {
+##         n.vars <- n.vars[1:j]
+##         vars <- vars[1:j]
+##         OOB.rf<- OOB.rf[1:j]
+##         OOB.sd <- OOB.sd[1:j]
+##         ##browser()
+##         min.oob.ci <- min(OOB.rf) + c.sd * OOB.sd[which.min(OOB.rf)]
+##         best.pos <-
+##             which(OOB.rf <= min.oob.ci)[which.min(n.vars[which(OOB.rf <= min.oob.ci)])]
 
-        selected.vars <- sort(unlist(strsplit(vars[best.pos],
-                                              " + ", fixed = TRUE)))
-        out <- list(selec.history = data.frame(
-                    Number.Variables = n.vars,
-                    Vars.in.Forest = vars,
-                    OOB = OOB.rf,
-                    sd.OOB = OOB.sd),
-                    rf.model = NA,
-                    selected.vars = selected.vars,
-                    selected.model = paste(selected.vars, collapse = " + "),
-                    best.model.nvars = n.vars[best.pos],
-                    initialImportances = initialImportances,
-                    initialOrderedImportances = initialOrderedImportances,
-                    ntree = ntree,
-                    mtry = mtry,
-                    firstForest = FirstForest)
-        class(out) <- "varSelRF"
-        return(out)
-    }
-}
-
-
+##         selected.vars <- sort(unlist(strsplit(vars[best.pos],
+##                                               " + ", fixed = TRUE)))
+##         out <- list(selec.history = data.frame(
+##                     Number.Variables = n.vars,
+##                     Vars.in.Forest = vars,
+##                     OOB = OOB.rf,
+##                     sd.OOB = OOB.sd),
+##                     rf.model = NA,
+##                     selected.vars = selected.vars,
+##                     selected.model = paste(selected.vars, collapse = " + "),
+##                     best.model.nvars = n.vars[best.pos],
+##                     initialImportances = initialImportances,
+##                     initialOrderedImportances = initialOrderedImportances,
+##                     ntree = ntree,
+##                     mtry = mtry,
+##                     firstForest = FirstForest)
+##         class(out) <- "varSelRF"
+##         return(out)
+##     }
+## }
 
 
 
-tune2RF <- function(x, y, tuneMtry = TRUE, tuneNtree = TRUE,
-                    startNtree = 1000, startMtryFactor = 1,
-                    stepFactorMtry = 1.25,
-                    stepFactorNtree = 1.75,
-                    minCorNtree = 0.9,
-                    quantNtree = 0.025, ## with 4000, look at first 100
-                    returnForest = TRUE,
-                    ntreeTry = 2000,
-                    verbose = TRUE,
-                    plot = FALSE,
-                    ...) {
-    ## if tuneMtry = TRUE and tuneNtree = TRUE,
-    ##        ntree is used for tuneRF, mtryFactor is ignored
-    ## if tuneMtry = TRUE and tuneNtree = FALSE
-    ##        ntree used for tuneRF and final ntree, and mtry factor is ignored
-    ## if tuneMtry = FALSE and tuneRF = TRUE,
-    ##        ntree is used only as starting value for search of ntree and
-    ##        mtryFactor is used for mtry
-    ## if tuneMtry = FALSE and tuneRF = FALSE,
-    ##        mtryFactor and ntree are the ntree and mtry used.
+## FIXME: uncomment, but fix global function uses. And add examples.
 
-    if(plot) {
-        op <- par(mfrow = c(1,2))
-        on.exit(par(op))
-    }
-    if(tuneMtry) {
-        tunedMtry <- tuneRF(x, y, stepFactor = stepFactorMtry,
-                            ntreeTry = ntreeTry,
-                            mtryStart = floor(sqrt(ncol(x)) * startMtryFactor),
-                            doBest = FALSE,
-                            plot = plot,
-                            trace = verbose)
-        tunedMtry <-
-            tunedMtry[which.min(tunedMtry[, 2]), 1]
-    } else {
-        tunedMtry <- floor(sqrt(ncol(x)) * startMtryFactor)
-    }
+## tune2RF <- function(x, y, tuneMtry = TRUE, tuneNtree = TRUE,
+##                     startNtree = 1000, startMtryFactor = 1,
+##                     stepFactorMtry = 1.25,
+##                     stepFactorNtree = 1.75,
+##                     minCorNtree = 0.9,
+##                     quantNtree = 0.025, ## with 4000, look at first 100
+##                     returnForest = TRUE,
+##                     ntreeTry = 2000,
+##                     verbose = TRUE,
+##                     plot = FALSE,
+##                     ...) {
+##     ## if tuneMtry = TRUE and tuneNtree = TRUE,
+##     ##        ntree is used for tuneRF, mtryFactor is ignored
+##     ## if tuneMtry = TRUE and tuneNtree = FALSE
+##     ##        ntree used for tuneRF and final ntree, and mtry factor is ignored
+##     ## if tuneMtry = FALSE and tuneRF = TRUE,
+##     ##        ntree is used only as starting value for search of ntree and
+##     ##        mtryFactor is used for mtry
+##     ## if tuneMtry = FALSE and tuneRF = FALSE,
+##     ##        mtryFactor and ntree are the ntree and mtry used.
 
-    tunedNtree <- startNtree
-    if(tuneNtree) {
-        if(verbose)
-            cat("\n Tunning ntree: initial forest construction \n")
-        f1 <- randomForest(x, y, mtry = tunedMtry,
-                           importance = TRUE,
-                           keep.forest = FALSE,
-                           ntree = tunedNtree)
-        repeat {
-            f2 <- randomForest(x, y, mtry = tunedMtry,
-                               importance = TRUE,
-                               keep.forest = FALSE,
-                               ntree = round(stepFactorNtree * tunedNtree))
-            m1 <- cbind(
-                        importance(f1, type = 1, scale = FALSE),
-                        importance(f2, type = 1, scale = FALSE))
-            m1[m1 < quantile(m1, 1-quantNtree)] <- NA
-            m1 <- na.omit(m1)
-            m2 <- m1
-            m2[m2 <= 0] <- NA
-            m2 <- na.omit(m2)
-            mc1 <- cor(m1)
-            mc.rob <- cov.rob(m2, method = "mcd", cor = TRUE)$cor
-            if(verbose) {
-                cat("\n ... tunning ntree; cor. importances successive ntrees\n")
-                colnames(mc1) <- c(tunedNtree, round(stepFactorNtree * tunedNtree))
-                rownames(mc1) <- c(tunedNtree, round(stepFactorNtree * tunedNtree))
-                colnames(mc.rob) <- c(tunedNtree, round(stepFactorNtree * tunedNtree))
-                rownames(mc.rob) <- c(tunedNtree, round(stepFactorNtree * tunedNtree))
-                cat("\n         correlation matrix\n")
-                print(round(mc1, 4))
-                cat("\n         robust correlation matrix\n")
-                print(round(mc.rob, 4))
-                cat(" \n using ", dim(m2)[1], "observations\n")
-                cat("\n")
-            }
-            if((min(mc1) > minCorNtree) &
-               (min(mc.rob) > minCorNtree)) {
-                plot(m1[, 1], m1[, 2], xlab = paste("Ntree", tunedNtree),
-                     ylab = paste("Ntree", round(stepFactorNtree * tunedNtree)),
-                     main =
-                     paste("Upper ", quantNtree,
-                           "th quantile of importances", sep = ""))
+##     if(plot) {
+##         op <- par(mfrow = c(1,2))
+##         on.exit(par(op))
+##     }
+##     if(tuneMtry) {
+##         tunedMtry <- tuneRF(x, y, stepFactor = stepFactorMtry,
+##                             ntreeTry = ntreeTry,
+##                             mtryStart = floor(sqrt(ncol(x)) * startMtryFactor),
+##                             doBest = FALSE,
+##                             plot = plot,
+##                             trace = verbose)
+##         tunedMtry <-
+##             tunedMtry[which.min(tunedMtry[, 2]), 1]
+##     } else {
+##         tunedMtry <- floor(sqrt(ncol(x)) * startMtryFactor)
+##     }
+
+##     tunedNtree <- startNtree
+##     if(tuneNtree) {
+##         if(verbose)
+##             cat("\n Tunning ntree: initial forest construction \n")
+##         f1 <- randomForest(x, y, mtry = tunedMtry,
+##                            importance = TRUE,
+##                            keep.forest = FALSE,
+##                            ntree = tunedNtree)
+##         repeat {
+##             f2 <- randomForest(x, y, mtry = tunedMtry,
+##                                importance = TRUE,
+##                                keep.forest = FALSE,
+##                                ntree = round(stepFactorNtree * tunedNtree))
+##             m1 <- cbind(
+##                         importance(f1, type = 1, scale = FALSE),
+##                         importance(f2, type = 1, scale = FALSE))
+##             m1[m1 < quantile(m1, 1-quantNtree)] <- NA
+##             m1 <- na.omit(m1)
+##             m2 <- m1
+##             m2[m2 <= 0] <- NA
+##             m2 <- na.omit(m2)
+##             mc1 <- cor(m1)
+##             mc.rob <- cov.rob(m2, method = "mcd", cor = TRUE)$cor
+##             if(verbose) {
+##                 cat("\n ... tunning ntree; cor. importances successive ntrees\n")
+##                 colnames(mc1) <- c(tunedNtree, round(stepFactorNtree * tunedNtree))
+##                 rownames(mc1) <- c(tunedNtree, round(stepFactorNtree * tunedNtree))
+##                 colnames(mc.rob) <- c(tunedNtree, round(stepFactorNtree * tunedNtree))
+##                 rownames(mc.rob) <- c(tunedNtree, round(stepFactorNtree * tunedNtree))
+##                 cat("\n         correlation matrix\n")
+##                 print(round(mc1, 4))
+##                 cat("\n         robust correlation matrix\n")
+##                 print(round(mc.rob, 4))
+##                 cat(" \n using ", dim(m2)[1], "observations\n")
+##                 cat("\n")
+##             }
+##             if((min(mc1) > minCorNtree) &
+##                (min(mc.rob) > minCorNtree)) {
+##                 plot(m1[, 1], m1[, 2], xlab = paste("Ntree", tunedNtree),
+##                      ylab = paste("Ntree", round(stepFactorNtree * tunedNtree)),
+##                      main =
+##                      paste("Upper ", quantNtree,
+##                            "th quantile of importances", sep = ""))
                      
-                break
-            }
-            tunedNtree <- round(stepFactorNtree * tunedNtree)
-            f1 <- f2
-        }
-    }
-    if(returnForest) {
-        if(tuneNtree)
-            return(f1)
-        else
-            return(randomForest(x, y, mtry = tunedMtry,
-                                importance = TRUE,
-                                keep.forest = FALSE,
-                                ntree = ntree)
-                   )
-    }
-    else {
-        return(c(tunedMtry = tunedMtry, tunedNtree = tunedNtree))
-    }
-}
+##                 break
+##             }
+##             tunedNtree <- round(stepFactorNtree * tunedNtree)
+##             f1 <- f2
+##         }
+##     }
+##     if(returnForest) {
+##         if(tuneNtree)
+##             return(f1)
+##         else
+##             return(randomForest(x, y, mtry = tunedMtry,
+##                                 importance = TRUE,
+##                                 keep.forest = FALSE,
+##                                 ntree = ntree)
+##                    )
+##     }
+##     else {
+##         return(c(tunedMtry = tunedMtry, tunedNtree = tunedNtree))
+##     }
+## }
 
 
 

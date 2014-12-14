@@ -1,0 +1,14 @@
+7d45e7fa57f527fc096c599e045b7213 *Changes
+6ae56a933f49cf0830a589ac72fa58f7 *DESCRIPTION
+cd8651fb37561154e36e6f8acc5583d8 *NAMESPACE
+613977f1fc1915a8c3c4ad0607714091 *R/varSelRF.R
+af6e22cbe62d3a6e61c239dd21ec4ba7 *README.md
+e03d417b63fc702bf5085dfe56aa0640 *man/plot.varSelRF.Rd
+cb5fda5a774498e3dcb65552c09b4398 *man/plot.varSelRFBoot.Rd
+ac3e4347239d98f64f6e06fbc240c976 *man/randomVarImpsRF.Rd
+4509d68d9c9b30402c19f57497066bf9 *man/randomVarImpsRFplot.Rd
+d08ef8225f3401aca9b508fbb574f3f1 *man/selProbPlot.Rd
+555eed35f65f0e50c59bea3065d8133a *man/summary.varSelRFBoot.Rd
+3578616ab65b871bd97f214e786e435e *man/varSelImpSpecRF.Rd
+499b16e6abda6745a04e2be91f833190 *man/varSelRF.Rd
+f13ff5227596ed9897e0a5107c7f569e *man/varSelRFBoot.Rd
